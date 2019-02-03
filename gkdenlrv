@@ -1,0 +1,194 @@
+#!/bin/bash
+#
+#    gkdenlrv  Copyright (c) 2019  Patrick M. Brennan
+#
+#    This program is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation, either version 3 of the License, or
+#    (at your option) any later version.
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+
+# Check that an import path was specified.
+if [[ -z $1 ]]; then
+  echo "When shooting at high resolutions, modern GoPro cameras create a Low Resolution Video (LRV) file"
+  echo "in addition to the full resolution MP4 file.  This is suitable for use as a proxy file within"
+  echo "Kdenlive; however, Kdenlive live does not provide an inbuilt mechanism for using the GoPro LRV"
+  echo "file - rather it wants to generate its own which is a time consuming and CPU intensive process."
+  echo "This script generates a Kdenlive project directory in such a manner that the GoPro LRV files are"
+  echo "detected and used by Kdenlive."
+  echo ""
+  echo "Usage: $(basename ${0}) <path to gopro video files>"
+  echo ""
+  echo "The script firstly creates a partial Kdenlive project structure IN THE CURRENT DIRECTORY:"
+  echo ""
+  echo "  . "
+  echo "  |- proxy"
+  echo "  |- sources"
+  echo "     |- photos"
+  echo "     |- videos"
+  echo ""
+  echo "Then all folders within the path specified on the commandline are then scanned for files which"
+  echo "are dealt with as below:"
+  echo ""
+  echo "  JPG"
+  echo "  ---"
+  echo "  Any JPG files found are copied into the sources/photos folder without further processing."
+  echo ""
+  echo "  MP4"
+  echo "  ---"
+  echo "  Any MP4 (full resolution video) files found are copied into the sources/videos folder.  The"
+  echo "  files are renamed to the format G<ID>_<CHAPTER>_<CODEC>.MP4.  This allows the video files to"
+  echo "  appear in chronological order when sorted by name (and further, in chapter order for recordings"
+  echo "  that span more than one file)."
+  echo ""
+  echo "  LRV"
+  echo "  ---"
+  echo "  Low resolution videos are renamed as per MP4 files, have their container format shifted to MKV"
+  echo "  (this is lossless and does not require a re-encode), and are named based on an MD5 hash of the"
+  echo "  first and last MB of the matching MP4 file."
+  echo ""
+  echo "  THM"
+  echo "  ---"
+  echo "  These are GoPro video thumbnails.  We just ignore these are the time for Kdenlive to generate"
+  echo "  a new thumbnail is minimal (plus they are regenerate to overlay the "P" proxy symbol in any"
+  echo "  event)."
+  echo ""
+  echo "NOTE: This script was written for my own personal use.  I release it here in the hope that it"
+  echo "may also be useful for others.  No warranty is implied.  You use this script at your own risk."
+  echo "If it deletes your precious family videos, you should probably have had a backup.  The script"
+  echo "should theoretically cope with spaces and unusual characters in filenames; however, I have not"
+  echo "tested this as it is a scenario that shouldn't really occur with GoPro's SD card structure."
+  exit 1
+fi
+
+import_path=$1
+
+# Check that the import path exists.
+if [[ ! -d $import_path ]]; then
+  echo "Import directory does not exist."
+  exit 1
+fi
+
+# Check that import path does not equal current directory.
+if [[ $(dirname ${import_path}) == $(dirname $(pwd)) ]] || [[ $import_path == '.' ]]; then
+  echo "Cannot import and export to same directory."
+  exit 1
+fi
+
+# Check binaries we depend on.
+for bin in ffmpeg md5sum tail head cut find cat sed dirname; do
+  if [[ ! -x $(which ${bin} 2>/dev/null) ]]; then
+    echo "Could not find executeable ${bin} binary...exiting."
+    exit 255
+  fi
+done
+
+
+# Create the proxy and sources directories.
+mkdir -p proxy sources/{videos,photos} render
+
+
+# Helper function - accepts a filename (with or without path) and
+# returns the new identifier component (without path or extension).
+new_fileid() {
+  echo $@ | sed 's/.*G\(H\|X\|L\)\([0-9][0-9]\)\([0-9][0-9][0-9][0-9]\)\....$/G\3_\2_\1/'
+}
+export -f new_fileid
+
+
+# Helper function to process low-res video files into kdenlive proxy files.
+proc_lrv() {
+
+  # File should always exist as we are called from find.  We are passed the full path to our src file.
+  src_file="${@}"
+  export src_file
+
+  # Will contain just the filename portion of the destination file (no extension).
+  fileid=$(new_fileid ${src_file})
+
+  # Proxy destination file.
+  dst_file="proxy/${fileid}.mkv"
+
+  # Full resolution file - used to generate a naming hash as below.  We use the already imported file as this
+  # will likely be quicker than the source file (which is probably on an SD card).  The proc_lrv function
+  # must therefore be called AFTER the proc_mp4 function.
+  full_res_file=$(ls -1 sources/videos/$(basename ${dst_file%_*})_?.MP4 2>/dev/null)
+
+  # Can't do anything else if we have no file to hash from (hashing will hang
+  # if file doesn't exist due to use of head and tail so we need this protection).
+  if [[ -f $full_res_file ]]; then
+
+    # Kdenlive expects proxy files in MKV format - switch container without re-encode and copy to destination.
+    echo -n "${src_file} -> ${dst_file}  "
+    ffmpeg -loglevel error -i $src_file -vcodec copy -acodec copy $dst_file
+
+    # Kdenlive uses hashes to identify proxy files.  The below logic was copied from the kdenlive source in 18.12.  If it
+    # changes in the future, the worst case is that the GoPro LRV file ends up ignored which will be relatively obvious
+    # for any large files as kdenlive will regenerate the proxy file.  If the LRV file is greater than 2MB, then hash the
+    # concat of the first and last MB, else hash the whole file.  We work with the copied file under the assumption it's
+    # on faster storage than the source which could be an SD card (also the switch to mkv could affect the filesize and
+    # therfore the logic).
+    filehash=""
+    if [[ $(stat -c%s $full_res_file) -gt 2000000 ]]; then
+      filehash=$(md5sum <(cat <(head -c 1000000 $full_res_file) <(tail -c 1000000 $full_res_file)) | cut -d' ' -f1)
+    else
+      filehash=$(md5sum $full_res_file | cut -d' ' -f1)
+    fi
+
+    # Create a symlink so that kdenlive can identify our LRV file as a proxy.  We do this rather than
+    # outright renaming the file as it makes it easier for a human to identify later if required.
+    echo "[${full_res_file}|${filehash}]"
+    ln -s $(basename $dst_file) proxy/${filehash}.mkv
+
+  fi
+
+}
+export -f proc_lrv
+
+
+# Helper function to move/rename full-res video files.
+proc_mp4() {
+  # Copy file into destination directory with new ID.
+  cp -vi "${@}" sources/videos/$(new_fileid "${@}").MP4
+}
+export -f proc_mp4
+
+
+# Copy all images to photos folder (we don't do anything else intelligent here).
+echo "===> [$(date --rfc-3339=seconds)] Importing Photos..."
+#find $import_path -type 'f' -name '*\.JPG' -exec cp -vi '{}' sources/photos/ \;
+echo "===> [$(date --rfc-3339=seconds)] Photo import complete."
+
+# Copy all full-res videos to videos folder with their new ID.
+echo "===> [$(date --rfc-3339=seconds)] Importing full resolution MP4 files..."
+#find $import_path -type 'f' -name '*\.MP4' -exec bash -c 'proc_mp4 "$0"' {} \;
+echo "===> [$(date --rfc-3339=seconds)] MP4 import complete."
+
+# Call LRV helper for each low-res video found.
+echo "===> [$(date --rfc-3339=seconds)] Importing low resolution proxies..."
+#find $import_path -type 'f' -name '*\.LRV' -exec bash -c 'proc_lrv "$0"' {} \;
+echo "===> [$(date --rfc-3339=seconds)] Proxy import complete."
+
+# We are done.  Print a usefuless message and exit.
+cat <<EOF
+
++------------------------------------------------------------------------------------------------+
+| You should now create a 'New Project' in Kdenvlive.  At the top of the new project creation    |
+| dialogue box is an option to specify a 'Custom project folder'.  Set this to the current       |
+| directory and ensure that the 'Proxy clips' option is checked.  The other settings within      |
+| proxy clips will only be used if a proxy file is missing and needs to be generated.  Otherwise |
+| when you drag clips into the project bin, the GoPro LRV file will be used.  A thumbnail and    |
+| audio thumbnail will still be generated for each clip, but otherwise the yellow 'P' overlay    |
+| should appear on each clip pretty quickly.                                                     |
++------------------------------------------------------------------------------------------------+
+EOF
+
+exit 0
