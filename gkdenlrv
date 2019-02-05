@@ -164,17 +164,17 @@ export -f proc_mp4
 
 # Copy all images to photos folder (we don't do anything else intelligent here).
 echo "===> [$(date --rfc-3339=seconds)] Importing Photos..."
-#find $import_path -type 'f' -name '*\.JPG' -exec cp -vi '{}' sources/photos/ \;
+find $import_path -type 'f' -name '*\.JPG' -exec cp -vi '{}' sources/photos/ \;
 echo "===> [$(date --rfc-3339=seconds)] Photo import complete."
 
 # Copy all full-res videos to videos folder with their new ID.
 echo "===> [$(date --rfc-3339=seconds)] Importing full resolution MP4 files..."
-#find $import_path -type 'f' -name '*\.MP4' -exec bash -c 'proc_mp4 "$0"' {} \;
+find $import_path -type 'f' -name '*\.MP4' -exec bash -c 'proc_mp4 "$0"' {} \;
 echo "===> [$(date --rfc-3339=seconds)] MP4 import complete."
 
 # Call LRV helper for each low-res video found.
 echo "===> [$(date --rfc-3339=seconds)] Importing low resolution proxies..."
-#find $import_path -type 'f' -name '*\.LRV' -exec bash -c 'proc_lrv "$0"' {} \;
+find $import_path -type 'f' -name '*\.LRV' -exec bash -c 'proc_lrv "$0"' {} \;
 echo "===> [$(date --rfc-3339=seconds)] Proxy import complete."
 
 # We are done.  Print a usefuless message and exit.
