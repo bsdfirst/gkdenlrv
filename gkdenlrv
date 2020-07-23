@@ -16,8 +16,8 @@
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
-# Check that an import path was specified.
-if [[ -z $1 ]]; then
+function usage()
+{
   echo "When shooting at high resolutions, modern GoPro cameras create a Low Resolution Video (LRV) file"
   echo "in addition to the full resolution MP4 file.  This is suitable for use as a proxy file within"
   echo "Kdenlive; however, Kdenlive live does not provide an inbuilt mechanism for using the GoPro LRV"
@@ -66,10 +66,71 @@ if [[ -z $1 ]]; then
   echo "If it deletes your precious family videos, you should probably have had a backup.  The script"
   echo "should theoretically cope with spaces and unusual characters in filenames; however, I have not"
   echo "tested this as it is a scenario that shouldn't really occur with GoPro's SD card structure."
-  exit 1
+  echo ""
+  echo "./gkdenlrv.sh"
+  echo "  -h --help"
+  echo "  --lastDrive |--auto (set import path as last mount point at /etc/proc)"
+  echo "  --move (move files. Default is copy)"
+  echo "  --dst=PATH (destination directory)"         
+  echo "   import_path"
+}
+
+export move=0
+searchLastDrive=0
+dst_dir=$(dirname $(pwd))
+
+while [ "$1" != "" ]; do
+  PARAM=`echo $1 | awk -F= '{print $1}'`
+  VALUE=`echo $1 | awk -F= '{print $2}'`
+  case $PARAM in
+    -h | --help)
+      usage
+      exit
+      ;;
+    --lastDrive)
+      searchLastDrive=1
+      ;;
+    --auto)
+      searchLastDrive=1
+      ;;
+    --dst)
+
+      dst_dir="$VALUE"
+      ;;
+    --move)
+      export move=1
+      ;;
+    *)
+      if [ $# -ne 1 ]; then
+        echo "ERROR: unknown parameter \"$PARAM\""
+        usage
+        exit 1
+      else
+        import_path=$1
+      fi 
+      ;;
+    esac
+    shift
+done
+
+if [ $searchLastDrive -eq 1 ]
+then
+  import_path=`tail -n 1 /proc/mounts | awk '{print $2}'`
+  echo "auto import_path:$import_path"
 fi
 
-import_path=$1
+export copyOrMoveCmd="cp"
+if [ $move -eq 1 ]
+then
+  export copyOrMoveCmd="mv"
+fi
+
+# Check that an import path was specified.
+if [[ -z $import_path ]]; then
+  echo "ERROR import_path is empty!"
+  usage
+  exit 1
+fi
 
 # Check that the import path exists.
 if [[ ! -d $import_path ]]; then
@@ -77,11 +138,23 @@ if [[ ! -d $import_path ]]; then
   exit 1
 fi
 
+echo "dst_dir:$dst_dir"
+if [[ ! -d "$dst_dir" ]]; then
+  #try to create dst dir
+  mkdir "$dst_dir"
+  if [ $? -ne 0 ]; then
+    echo "Destination directory does not exist."
+    exit 1
+  fi
+fi
+
 # Check that import path does not equal current directory.
-if [[ $(dirname ${import_path}) == $(dirname $(pwd)) ]] || [[ $import_path == '.' ]]; then
+if [[ $(dirname ${import_path}) == $(dirname ${dst_dir}) ]] || [[ $import_path == '.' ]]; then
   echo "Cannot import and export to same directory."
   exit 1
 fi
+
+cd "$dst_dir"
 
 # Check binaries we depend on.
 for bin in ffmpeg md5sum tail head cut find cat sed dirname; do
@@ -102,7 +175,6 @@ new_fileid() {
   echo $@ | sed 's/.*G\(H\|X\|L\)\([0-9][0-9]\)\([0-9][0-9][0-9][0-9]\)\....$/G\3_\2_\1/'
 }
 export -f new_fileid
-
 
 # Helper function to process low-res video files into kdenlive proxy files.
 proc_lrv() {
@@ -129,6 +201,14 @@ proc_lrv() {
     # Kdenlive expects proxy files in MKV format - switch container without re-encode and copy to destination.
     echo -n "${src_file} -> ${dst_file}  "
     ffmpeg -loglevel error -i $src_file -vcodec copy -acodec copy $dst_file
+    if [ $? -ne 0 ]; then
+      echo "ffmpeg error $?"
+      exit 10
+    fi
+    if [ $move -eq 1 ]; then
+      echo "remove $src_file"
+      rm $src_file
+    fi
 
     # Kdenlive uses hashes to identify proxy files.  The below logic was copied from the kdenlive source in 18.12.  If it
     # changes in the future, the worst case is that the GoPro LRV file ends up ignored which will be relatively obvious
@@ -157,14 +237,14 @@ export -f proc_lrv
 # Helper function to move/rename full-res video files.
 proc_mp4() {
   # Copy file into destination directory with new ID.
-  cp -vi "${@}" sources/videos/$(new_fileid "${@}").MP4
+  $copyOrMoveCmd -vi "${@}" sources/videos/$(new_fileid "${@}").MP4
 }
 export -f proc_mp4
 
 
 # Copy all images to photos folder (we don't do anything else intelligent here).
 echo "===> [$(date --rfc-3339=seconds)] Importing Photos..."
-find $import_path -type 'f' -name '*\.JPG' -exec cp -vi '{}' sources/photos/ \;
+find $import_path -type 'f' -name '*\.JPG' -exec $copyOrMoveCmd -vi '{}' sources/photos/ \;
 echo "===> [$(date --rfc-3339=seconds)] Photo import complete."
 
 # Copy all full-res videos to videos folder with their new ID.
