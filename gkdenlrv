@@ -77,7 +77,7 @@ function usage()
 
 export move=0
 searchLastDrive=0
-dst_dir=$(dirname $(pwd))
+dst_dir=$(pwd)
 
 while [ "$1" != "" ]; do
   PARAM=`echo $1 | awk -F= '{print $1}'`
