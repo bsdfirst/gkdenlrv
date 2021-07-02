@@ -42,6 +42,11 @@ $ cd gkdenlrv
 $ cp gkdenlrv ~/.local/bin
 ```
 
+Example move files from last mounted sdcard to new project folder
+
+```
+gkdenlrv --auto --move --dst=/hddStorage/kdenlive/projects/
+```
 
 Create an empty directory to hold your Kdenlive project:
 
