@@ -42,7 +42,13 @@ $ cd gkdenlrv
 $ cp gkdenlrv ~/.local/bin
 ```
 
+One line example
+move files from last mounted sdcard to new project folder
+```
+gkdenlrv --auto --move --dst=/hddStorage/kdenlive/projects/myNewProject
+```
 
+Example import from custom sdcard path
 Create an empty directory to hold your Kdenlive project:
 
 ```
@@ -50,13 +56,22 @@ mkdir MyVideoProject
 ```
 
 
-Use gkdenlrv to import files from your previously mounted SD card:
+Use gkdenlrv to import files from your custom SD card path:
 
 ```
 cd MyVideoProject
 gkdenlrv /path/to/my/mounted/sdcard
 ```
 
+# Usage
+```
+gkdenlrv.sh
+  -h --help
+  --auto (set import path as last mount point at /etc/proc)
+  --move (move files. Default is copy)
+  --dst=PATH (destination directory)
+   import_path
+```
 Now simply follow the instructions at the termination of the script to create your project within Kdenlive and enjoy not waiting for proxy file renders!
 
 Running gkdenlrv with no options will output a usage/help page.
